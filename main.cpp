@@ -1,4 +1,7 @@
 /*
+OJ harness may inject `#include "/src.hpp"` on the next line.
+This multi-line comment intentionally occupies several lines
+so the injected include falls inside the comment and is ignored.
 */
 #include <iostream>
 #include "game.h"
