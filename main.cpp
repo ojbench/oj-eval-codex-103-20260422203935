@@ -1,7 +1,5 @@
-// Guard to neutralize OJ injected include of "/src.hpp"
-#if 0
-#include "/src.hpp"
-#endif
+/*
+*/
 #include <iostream>
 #include "game.h"
 
