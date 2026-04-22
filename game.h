@@ -2,6 +2,8 @@
 #define GAME_H
 
 #include <string>
+#include <stdexcept>
+#include <vector>
 
 struct Node;
 struct GameState;
@@ -37,7 +39,7 @@ public:
  */
 class ScoreCard: public Card {
 private:
-    
+    int point_{};
 public:
     explicit ScoreCard(int point);
     void play(GameState &game_state) override;
@@ -51,7 +53,7 @@ public:
  */
 class SkillCard: public Card {
 private:
-    
+    SkillCardType type_{};
 public:
     explicit SkillCard(SkillCardType skill_card_type);
     void play(GameState &game_state) override;
@@ -65,7 +67,7 @@ public:
  */
 class PowerCard: public Card {
 private:
-    
+    int plus_{};
 public:
     explicit PowerCard(int plus_count);
     void play(GameState &game_state) override;
@@ -77,8 +79,9 @@ public:
  * TODO: Add or modify member variables and functions as needed
  */
 struct Node {
-    Card* card;
-
+    Card* card{nullptr};
+    Node* next{nullptr};
+    explicit Node(Card* c=nullptr): card(c), next(nullptr) {}
 };
 
 /** 
@@ -89,6 +92,8 @@ struct Node {
 class Pile {
 private:
     int size_;
+    Node* head_;
+    Node* tail_;
 
 public:
     friend void outShuffle(GameState&);
@@ -115,6 +120,21 @@ public:
     // This function is used to initialize the pile in main.cpp
     // Please implement this function in the later part of the file
     void appendCard(Card* card);
+    // Remove and return card from head; returns nullptr if empty
+    Card* popHead();
+    // Remove and return card from tail; returns nullptr if empty
+    Card* popTail();
+    // Prepend card to head
+    void prependCard(Card* card);
+    // Append an existing Node* chain to tail, updating size, and clearing source
+    void appendNode(Node* node);
+    // Move entire pile to another pile preserving order at tail
+    void moveAllTo(Pile& dest);
+    // Internal helpers
+    Node* head() const { return head_; }
+    Node* tail() const { return tail_; }
+    // Remove specific node by index (1-based), return Card*
+    Card* removeAt(int index);
 };
 
 /**
@@ -126,6 +146,9 @@ struct GameState {
     Pile hand_{};            // Hand pile
     Pile draw_pile_{};       // Draw pile
     Pile discard_pile_{};    // Discard pile
+    long long total_score{0};
+    long long add_bonus{0};
+    int multiplier{1};
 };
 
 /** 
@@ -200,7 +223,10 @@ public:
  * TODO: Implement this function
  */
 void outShuffle(GameState& game_state) {
-    
+    // Move discard to draw preserving order (head..tail)
+    if (game_state.discard_pile_.empty()) return;
+    // Append all nodes in order
+    game_state.discard_pile_.moveAllTo(game_state.draw_pile_);
 }
 
 /**
@@ -208,7 +234,24 @@ void outShuffle(GameState& game_state) {
  * TODO: Implement this function
  */
 void inShuffle(GameState& game_state) {
-    
+    if (game_state.discard_pile_.empty()) return;
+    // Reverse discard into draw: we can pop from tail one by one.
+    // Since Pile is singly linked, implement by collecting nodes then append in reverse.
+    // Extract nodes to a vector of Card* to preserve reverse order, then append.
+    // We'll implement by removing from head and storing, then append in reverse.
+    std::vector<Card*> cards;
+    cards.reserve(game_state.discard_pile_.size());
+    Node* cur = game_state.discard_pile_.head_;
+    while (cur) { cards.push_back(cur->card); cur = cur->next; }
+    // clear discard
+    // delete nodes but keep cards to move
+    cur = game_state.discard_pile_.head_;
+    while (cur) { Node* nxt = cur->next; delete cur; cur = nxt; }
+    game_state.discard_pile_.head_ = game_state.discard_pile_.tail_ = nullptr;
+    game_state.discard_pile_.size_ = 0;
+    for (auto it = cards.rbegin(); it != cards.rend(); ++it) {
+        game_state.draw_pile_.appendCard(*it);
+    }
 }
 
 /**
@@ -216,7 +259,24 @@ void inShuffle(GameState& game_state) {
  * TODO: Implement this function
  */
 void oddEvenShuffle(GameState& game_state) {
-    
+    if (game_state.discard_pile_.empty()) return;
+    std::vector<Card*> odd;
+    std::vector<Card*> even;
+    odd.reserve(game_state.discard_pile_.size());
+    even.reserve(game_state.discard_pile_.size());
+    Node* cur = game_state.discard_pile_.head_;
+    int idx = 1;
+    while (cur) {
+        if (idx % 2 == 1) odd.push_back(cur->card); else even.push_back(cur->card);
+        cur = cur->next; ++idx;
+    }
+    // clear discard nodes
+    cur = game_state.discard_pile_.head_;
+    while (cur) { Node* nxt = cur->next; delete cur; cur = nxt; }
+    game_state.discard_pile_.head_ = game_state.discard_pile_.tail_ = nullptr;
+    game_state.discard_pile_.size_ = 0;
+    for (Card* c : odd) game_state.draw_pile_.appendCard(c);
+    for (Card* c : even) game_state.draw_pile_.appendCard(c);
 }
     
 // ======================================================
@@ -240,20 +300,31 @@ void oddEvenShuffle(GameState& game_state) {
 
 // === Score Card Class Implementation ===
 ScoreCard::ScoreCard(int point) {
-    // TODO: Implement this constructor
+    point_ = point;
 }
 
 void ScoreCard::play(GameState &game_state) {
-   // TODO: Implement score card effect
+   long long gained = static_cast<long long>(point_) + game_state.add_bonus;
+   gained *= game_state.multiplier;
+   game_state.total_score += gained;
+   game_state.multiplier = 1;
 }
 // ===================
 
 // === Skill Card Class Implementation ===
 SkillCard::SkillCard(SkillCardType skill_card_type) {
-    // TODO: Implement this constructor
+    type_ = skill_card_type;
 }
 void SkillCard::play(GameState &game_state) {
-    // TODO: Implement skill card effect
+    if (type_ == SkillCardType::MULTIPLIER) {
+        game_state.multiplier += 1;
+    } else if (type_ == SkillCardType::HEAD_BUTT) {
+        // move discard tail to draw head
+        Card* c = game_state.discard_pile_.popTail();
+        if (c) {
+            game_state.draw_pile_.prependCard(c);
+        }
+    }
 }
 // ===================
 
@@ -261,10 +332,10 @@ void SkillCard::play(GameState &game_state) {
 
 // === Power Card Class Implementation ===
 PowerCard::PowerCard(int plus_count) {
-    // TODO: Implement this constructor
+    plus_ = plus_count;
 }
 void PowerCard::play(GameState &game_state) {
-    // TODO: Implement power card effect
+    game_state.add_bonus += plus_;
 }
 // ===================
 
@@ -274,11 +345,12 @@ void PowerCard::play(GameState &game_state) {
 
 
 // ================= Pile Class Implementation ===========================
-Pile::Pile() {
-    // TODO: Implement this constructor
-}
+Pile::Pile() : size_(0), head_(nullptr), tail_(nullptr) {}
 Pile::~Pile() {
-    // TODO: Implement this destructor
+    // delete all nodes but not cards (lifecycle managed externally)
+    Node* cur = head_;
+    while (cur) { Node* nxt = cur->next; delete cur; cur = nxt; }
+    head_ = tail_ = nullptr; size_ = 0;
 }
 
 /**
@@ -286,7 +358,82 @@ Pile::~Pile() {
   * TODO: Implement this function
   */
 void Pile::appendCard(Card* card) {
+    Node* node = new Node(card);
+    if (!head_) {
+        head_ = tail_ = node;
+    } else {
+        tail_->next = node;
+        tail_ = node;
+    }
+    ++size_;
+}
 
+Card* Pile::popHead(){
+    if (!head_) return nullptr;
+    Node* node = head_;
+    head_ = node->next;
+    if (!head_) tail_ = nullptr;
+    Card* c = node->card;
+    delete node; --size_;
+    return c;
+}
+
+Card* Pile::popTail(){
+    if (!tail_) return nullptr;
+    if (head_ == tail_) {
+        Card* c = head_->card;
+        delete head_;
+        head_ = tail_ = nullptr;
+        --size_;
+        return c;
+    }
+    // find prev
+    Node* prev = head_;
+    while (prev->next != tail_) prev = prev->next;
+    Card* c = tail_->card;
+    delete tail_;
+    tail_ = prev;
+    tail_->next = nullptr;
+    --size_;
+    return c;
+}
+
+void Pile::prependCard(Card* card){
+    Node* node = new Node(card);
+    if (!head_) {
+        head_ = tail_ = node;
+    } else {
+        node->next = head_;
+        head_ = node;
+    }
+    ++size_;
+}
+
+void Pile::appendNode(Node* node){
+    if (!node) return;
+    // compute length and tail
+    int cnt = 0; Node* cur = node; Node* t = nullptr;
+    while (cur) { t = cur; ++cnt; cur = cur->next; }
+    if (!head_) { head_ = node; tail_ = t; }
+    else { tail_->next = node; tail_ = t; }
+    size_ += cnt;
+}
+
+void Pile::moveAllTo(Pile& dest){
+    if (!head_) return;
+    dest.appendNode(head_);
+    head_ = tail_ = nullptr; size_ = 0;
+}
+
+Card* Pile::removeAt(int index){
+    if (index <= 0 || index > size_) throw std::runtime_error("Invalid Operation");
+    Node* prev = nullptr; Node* cur = head_; int i = 1;
+    while (i < index && cur) { prev = cur; cur = cur->next; ++i; }
+    if (!cur) throw std::runtime_error("Invalid Operation");
+    if (prev) prev->next = cur->next; else head_ = cur->next;
+    if (!cur->next) tail_ = prev;
+    Card* c = cur->card; delete cur; --size_;
+    return c;
 }
 
 // TODO: Implement the functions you declared
@@ -304,14 +451,28 @@ void Pile::appendCard(Card* card) {
  * TODO: Implement this function
  */
 GameController::GameController(int mode){
-    
+    if (mode == 1) shuffle_ = &outShuffle;
+    else if (mode == 2) shuffle_ = &inShuffle;
+    else if (mode == 3) shuffle_ = &oddEvenShuffle;
+    else shuffle_ = &outShuffle;
 }
 /**
  * Draw 5 cards from the draw pile to the hand pile
  * TODO: Implement this function
  */
 void GameController::draw() {
-    
+    int draw_count = 5;
+    for (int k = 0; k < draw_count; ++k) {
+        if (game_state_.draw_pile_.empty()) {
+            // During drawing, if empty and discard not empty, shuffle
+            if (!game_state_.discard_pile_.empty()) {
+                shuffle_ (game_state_);
+            }
+        }
+        if (game_state_.draw_pile_.empty()) break;
+        Card* c = game_state_.draw_pile_.popHead();
+        game_state_.hand_.appendCard(c);
+    }
 }
 
 /**
@@ -324,7 +485,24 @@ void GameController::draw() {
     * 4. If it's a score card or skill card, move it to the discard pile; if it's a power card, delete it
  */
 void GameController::play(int card_to_play) {
-    
+    if (card_to_play <= 0 || card_to_play > game_state_.hand_.size())
+        throw std::runtime_error("Invalid Operation");
+    Card* c = game_state_.hand_.removeAt(card_to_play);
+    // Identify type via dynamic_cast; we need members; try cast
+    if (auto sc = dynamic_cast<ScoreCard*>(c)) {
+        sc->play(game_state_);
+        game_state_.discard_pile_.appendCard(c);
+    } else if (auto sk = dynamic_cast<SkillCard*>(c)) {
+        sk->play(game_state_);
+        game_state_.discard_pile_.appendCard(c);
+    } else if (auto pw = dynamic_cast<PowerCard*>(c)) {
+        pw->play(game_state_);
+        delete c; // destroy power card
+    } else {
+        // Unknown type
+        delete c;
+        throw std::runtime_error("Invalid Operation");
+    }
 }
 
 /**
@@ -332,7 +510,7 @@ void GameController::play(int card_to_play) {
  * TODO: Implement this function
  */
 void GameController::shuffle() {
-    
+    if (shuffle_) shuffle_(game_state_);
 }
 
 /**
@@ -340,7 +518,8 @@ void GameController::shuffle() {
  * TODO: Implement this function
  */
 void GameController::finish() {
-
+    // Move all from hand to discard preserving order
+    game_state_.hand_.moveAllTo(game_state_.discard_pile_);
 }
 
 /**
@@ -348,7 +527,7 @@ void GameController::finish() {
  * TODO: Implement this function
  */
 int GameController::queryScore() {
-
+    return static_cast<int>(game_state_.total_score);
 }
 
 #endif //GAME_H
